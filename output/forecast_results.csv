@@ -1,0 +1,4 @@
+day_ahead,pm25_prediction,temperature_prediction,humidity_prediction
+D+1,38.419,29.488,51.056
+D+2,123.469,34.618,14.452
+D+3,142.737,36.344,50.264
