@@ -5,3 +5,4 @@ joblib
 xgboost
 scikit-learn
 pydantic
+Jinja2==3.1.6
