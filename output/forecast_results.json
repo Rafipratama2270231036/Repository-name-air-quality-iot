@@ -1,20 +1,9 @@
 [
     {
         "day_ahead": "D+1",
+        "target_date": "2026-07-01",
         "pm25_prediction": 38.419,
         "temperature_prediction": 29.488,
         "humidity_prediction": 51.056
-    },
-    {
-        "day_ahead": "D+2",
-        "pm25_prediction": 123.469,
-        "temperature_prediction": 34.618,
-        "humidity_prediction": 14.452
-    },
-    {
-        "day_ahead": "D+3",
-        "pm25_prediction": 142.737,
-        "temperature_prediction": 36.344,
-        "humidity_prediction": 50.264
     }
 ]

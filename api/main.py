@@ -1,208 +1,393 @@
-from pathlib import Path
-from typing import List, Optional
-from datetime import datetime, timedelta
-import pandas as pd
-import sqlite3
 import os
+import sys
+import sqlite3
+import threading
+import logging
+from datetime import datetime
+from pathlib import Path
+from typing import Optional, List, Dict, Any
 
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
-import uvicorn
+from fastapi import FastAPI, Request, HTTPException, Query
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 
-from predict_model import predict_future, load_dataset, DATASET_PATH
+# ======================================================
+# Konfigurasi Logging
+# ======================================================
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
 
+# ======================================================
+# Penentuan Path Dasar (Railway Compatible)
+# ======================================================
+BASE_DIR = Path(__file__).resolve().parent.parent  # DEPLOY/
+sys.path.insert(0, str(BASE_DIR))
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-DB_DIR = BASE_DIR / "database"
-DB_PATH = DB_DIR / "history.db"
+# ======================================================
+# Import Fungsi Prediksi (dengan fallback jika belum ada)
+# ======================================================
+try:
+    from predict_model import predict_future
+    PREDICT_MODEL_AVAILABLE = True
+    logger.info("Modul predict_model berhasil diimpor.")
+except ImportError:
+    PREDICT_MODEL_AVAILABLE = False
+    logger.warning("Modul predict_model tidak ditemukan. Endpoint /api/predict akan dinonaktifkan.")
+    predict_future = None  # type: ignore
 
+# ======================================================
+# Validasi Keberadaan Folder dan File Penting
+# ======================================================
+TEMPLATES_DIR = BASE_DIR / "templates"
+STATIC_DIR = BASE_DIR / "static"
+INDEX_HTML = TEMPLATES_DIR / "index.html"
+
+if not TEMPLATES_DIR.exists():
+    raise RuntimeError(
+        f"Folder templates tidak ditemukan di {TEMPLATES_DIR}. "
+        "Pastikan struktur project sudah benar."
+    )
+if not INDEX_HTML.exists():
+    raise RuntimeError(
+        f"File index.html tidak ditemukan di {INDEX_HTML}. "
+        "Pastikan file dashboard sudah tersedia."
+    )
+if not STATIC_DIR.exists():
+    logger.warning(f"Folder static tidak ditemukan di {STATIC_DIR}. File CSS/JS tidak akan termuat.")
+
+# ======================================================
+# Inisialisasi Aplikasi FastAPI
+# ======================================================
 app = FastAPI(
-    title="Air Quality Prediction API",
+    title="Air Quality Monitoring & Prediction",
     version="1.0.0",
-    description="API monitoring, prediksi, dan riwayat kualitas udara berbasis XGBoost"
+    description="Sistem monitoring kualitas udara real-time dan prediksi menggunakan XGBoost",
 )
 
+# ======================================================
+# Mount Static Files dan Templates
+# ======================================================
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
-class PredictRequest(BaseModel):
-    days: int = Field(..., ge=1, le=7)
+# ======================================================
+# Konfigurasi Database
+# ======================================================
+DATABASE_DIR = BASE_DIR / "database"
+DATABASE_DIR.mkdir(parents=True, exist_ok=True)
+DB_PATH = DATABASE_DIR / "history.db"
 
+# Global connection & lock untuk thread-safe
+_db_connection: Optional[sqlite3.Connection] = None
+_db_lock = threading.Lock()
 
-class LatestResponse(BaseModel):
-    created_at: Optional[str]
-    pm25: Optional[float]
-    temperature: Optional[float]
-    humidity: Optional[float]
+def get_db() -> sqlite3.Connection:
+    """
+    Mendapatkan koneksi database yang sudah diinisialisasi (thread-safe).
+    Membuat tabel jika belum ada.
+    """
+    global _db_connection
+    if _db_connection is None:
+        with _db_lock:
+            if _db_connection is None:
+                _db_connection = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+                _db_connection.row_factory = sqlite3.Row
+                # Aktifkan WAL mode untuk performa lebih baik
+                _db_connection.execute("PRAGMA journal_mode=WAL;")
+                _create_tables(_db_connection)
+                logger.info("Database berhasil diinisialisasi dan tabel siap.")
+    return _db_connection
 
-
-class PredictionItem(BaseModel):
-    day_ahead: str
-    pm25_prediction: float
-    temperature_prediction: float
-    humidity_prediction: float
-
-
-class HistoryItem(BaseModel):
-    id: int
-    prediction_date: str
-    target_date: str
-    pm25_prediction: float
-    temperature_prediction: float
-    humidity_prediction: float
-    pm25_actual: Optional[float]
-    temperature_actual: Optional[float]
-    humidity_actual: Optional[float]
-    pm25_error: Optional[float]
-    temperature_error: Optional[float]
-    humidity_error: Optional[float]
-
-
-def get_connection():
-    DB_DIR.mkdir(parents=True, exist_ok=True)
-    return sqlite3.connect(DB_PATH)
-
-
-def init_db():
-    conn = get_connection()
+def _create_tables(conn: sqlite3.Connection) -> None:
+    """
+    Membuat tabel-tabel yang diperlukan jika belum ada.
+    """
     cursor = conn.cursor()
-    cursor.execute(
-        """
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS sensor_data (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            pm25 REAL NOT NULL,
+            temperature REAL NOT NULL,
+            humidity REAL NOT NULL
+        );
+    """)
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS prediction_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            prediction_date TEXT NOT NULL,
-            target_date TEXT NOT NULL,
-            pm25_prediction REAL NOT NULL,
-            temperature_prediction REAL NOT NULL,
-            humidity_prediction REAL NOT NULL,
+            prediction_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            target_date DATE NOT NULL,
+            pm25_prediction REAL,
+            temperature_prediction REAL,
+            humidity_prediction REAL,
             pm25_actual REAL,
             temperature_actual REAL,
             humidity_actual REAL,
             pm25_error REAL,
             temperature_error REAL,
             humidity_error REAL
-        )
-        """
-    )
+        );
+    """)
     conn.commit()
-    conn.close()
+    logger.info("Struktur tabel diverifikasi.")
 
+# ======================================================
+# Model Pydantic untuk Request Body
+# ======================================================
+class SensorData(BaseModel):
+    pm25: float
+    temperature: float
+    humidity: float
 
-def save_history(predictions: List[dict]):
-    conn = get_connection()
-    cursor = conn.cursor()
+class PredictRequest(BaseModel):
+    days: int
 
-    for item in predictions:
-        cursor.execute(
-            """
-            INSERT INTO prediction_history (
-                prediction_date, target_date,
-                pm25_prediction, temperature_prediction, humidity_prediction,
-                pm25_actual, temperature_actual, humidity_actual,
-                pm25_error, temperature_error, humidity_error
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                item["prediction_date"],
-                item["target_date"],
-                item["pm25_prediction"],
-                item["temperature_prediction"],
-                item["humidity_prediction"],
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-            )
-        )
-
-    conn.commit()
-    conn.close()
-
-
-def compute_target_date(base_date: datetime, day_ahead: str) -> str:
-    day_number = int(day_ahead.replace("D+", ""))
-    target = base_date + timedelta(days=day_number)
-    return target.strftime("%Y-%m-%d")
-
-
+# ======================================================
+# Event Startup
+# ======================================================
 @app.on_event("startup")
-def startup_event():
-    init_db()
+async def startup_event():
+    """Inisialisasi database connection dan laporan status."""
+    get_db()
+    logger.info("Aplikasi siap menerima request.")
 
-
-@app.get("/latest", response_model=LatestResponse)
-def get_latest():
+# ======================================================
+# Endpoint: Halaman Utama (Dashboard)
+# ======================================================
+@app.get("/", response_class=HTMLResponse)
+async def index(request: Request):
+    """
+    Menampilkan halaman dashboard monitoring dan prediksi.
+    """
     try:
-        df = load_dataset(DATASET_PATH)
-        last = df.tail(1).iloc[0]
+        template = templates.get_template("index.html")
+        rendered = template.render({"request": request})
+        return HTMLResponse(content=rendered)
+    except Exception as e:
+        logger.error(f"Gagal merender template index.html: {e}")
+        raise HTTPException(status_code=500, detail="Template rendering error")
+
+# ======================================================
+# Endpoint: Menerima Data Sensor dari ESP32
+# ======================================================
+@app.post("/api/sensor")
+async def receive_sensor_data(data: SensorData):
+    """
+    Menerima data sensor dari ESP32 dan menyimpannya ke database.
+    """
+    conn = get_db()
+    try:
+        with _db_lock:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO sensor_data (pm25, temperature, humidity) VALUES (?, ?, ?);",
+                (data.pm25, data.temperature, data.humidity),
+            )
+            conn.commit()
+            logger.info(
+                f"Data sensor disimpan: PM2.5={data.pm25}, Suhu={data.temperature}, Kelembapan={data.humidity}"
+            )
         return {
-            "created_at": str(last["created_at"]),
-            "pm25": float(last["pm25"]),
-            "temperature": float(last["temperature"]),
-            "humidity": float(last["humidity"]),
+            "status": "success",
+            "message": "Sensor data berhasil disimpan.",
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Gagal menyimpan data sensor: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
 
-
-@app.post("/predict", response_model=List[PredictionItem])
-def predict(payload: PredictRequest):
+# ======================================================
+# Endpoint: Data Sensor Terbaru (Konsisten dengan format wrapper)
+# ======================================================
+@app.get("/api/latest")
+async def get_latest_sensor():
+    """
+    Mengambil data sensor terbaru.
+    Selalu mengembalikan format {status, data} agar kompatibel dengan frontend.
+    """
+    conn = get_db()
     try:
-        results = predict_future(days=payload.days)
-
-        df = load_dataset(DATASET_PATH)
-        prediction_date = df.tail(1).iloc[0]["created_at"]
-        if pd.isna(prediction_date):
-            raise ValueError("Tanggal prediksi tidak valid")
-
-        if hasattr(prediction_date, "to_pydatetime"):
-            prediction_date = prediction_date.to_pydatetime()
-
-        prediction_date_str = prediction_date.strftime("%Y-%m-%d %H:%M:%S")
-
-        history_rows = []
-        for item in results:
-            history_rows.append(
-                {
-                    "prediction_date": prediction_date_str,
-                    "target_date": compute_target_date(prediction_date, item["day_ahead"]),
-                    "pm25_prediction": item["pm25_prediction"],
-                    "temperature_prediction": item["temperature_prediction"],
-                    "humidity_prediction": item["humidity_prediction"],
+        with _db_lock:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM sensor_data ORDER BY id DESC LIMIT 1;")
+            row = cursor.fetchone()
+        if row is None:
+            # Tidak ada data: kembalikan data kosong dengan status success
+            return {
+                "status": "success",
+                "data": {
+                    "created_at": None,
+                    "pm25": 0.0,
+                    "temperature": 0.0,
+                    "humidity": 0.0,
                 }
-            )
-
-        save_history(history_rows)
-        return results
+            }
+        return {
+            "status": "success",
+            "data": {
+                "created_at": row["created_at"],
+                "pm25": row["pm25"],
+                "temperature": row["temperature"],
+                "humidity": row["humidity"],
+            }
+        }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Gagal mengambil data sensor terbaru: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
 
-
-@app.get("/history", response_model=List[HistoryItem])
-def get_history():
+# ======================================================
+# Endpoint: Riwayat Data Sensor
+# ======================================================
+@app.get("/api/history")
+async def get_sensor_history(
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+):
+    """
+    Mengambil riwayat data sensor dengan paginasi.
+    """
+    conn = get_db()
     try:
-        conn = get_connection()
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            SELECT
-                id, prediction_date, target_date,
-                pm25_prediction, temperature_prediction, humidity_prediction,
-                pm25_actual, temperature_actual, humidity_actual,
-                pm25_error, temperature_error, humidity_error
-            FROM prediction_history
-            ORDER BY id DESC
-            """
-        )
-        rows = cursor.fetchall()
-        conn.close()
-        return [dict(row) for row in rows]
+        with _db_lock:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM sensor_data ORDER BY id DESC LIMIT ? OFFSET ?;",
+                (limit, offset),
+            )
+            rows = cursor.fetchall()
+        history = [
+            {
+                "id": row["id"],
+                "created_at": row["created_at"],
+                "pm25": row["pm25"],
+                "temperature": row["temperature"],
+                "humidity": row["humidity"],
+            }
+            for row in rows
+        ]
+        return {
+            "status": "success",
+            "data": history,
+        }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Gagal mengambil riwayat sensor: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
 
+# ======================================================
+# Endpoint: Prediksi Kualitas Udara
+# ======================================================
+@app.post("/api/predict")
+async def predict_air_quality(req: PredictRequest):
+    """
+    Melakukan prediksi kualitas udara untuk D+1 hingga D+7.
+    """
+    if not PREDICT_MODEL_AVAILABLE or predict_future is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Modul prediksi tidak tersedia. Pastikan predict_model.py sudah benar.",
+        )
 
+    days = req.days
+    if days < 1 or days > 7:
+        raise HTTPException(status_code=400, detail="Jumlah hari harus antara 1 sampai 7.")
+
+    try:
+        predictions: List[Dict[str, Any]] = predict_future(days)
+        if not isinstance(predictions, list) or len(predictions) == 0:
+            raise ValueError("Fungsi predict_future harus mengembalikan list non-kosong.")
+
+        conn = get_db()
+        saved_predictions = []
+        prediction_date = datetime.now().isoformat()
+
+        with _db_lock:
+            cursor = conn.cursor()
+            for pred in predictions:
+                target_date = pred.get("target_date")
+                pm25_pred = pred.get("pm25")
+                temp_pred = pred.get("temperature")
+                hum_pred = pred.get("humidity")
+
+                cursor.execute(
+                    """INSERT INTO prediction_history 
+                    (prediction_date, target_date, pm25_prediction, temperature_prediction, humidity_prediction)
+                    VALUES (?, ?, ?, ?, ?);""",
+                    (prediction_date, target_date, pm25_pred, temp_pred, hum_pred),
+                )
+                saved_predictions.append({
+                    "prediction_date": prediction_date,
+                    "target_date": target_date,
+                    "pm25_prediction": pm25_pred,
+                    "temperature_prediction": temp_pred,
+                    "humidity_prediction": hum_pred,
+                })
+            conn.commit()
+
+        logger.info(f"Prediksi {days} hari berhasil disimpan.")
+        return {
+            "status": "success",
+            "message": f"Prediksi untuk {days} hari ke depan berhasil dihitung.",
+            "data": saved_predictions,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Gagal melakukan prediksi: {e}")
+        raise HTTPException(status_code=500, detail=f"Prediksi gagal: {str(e)}")
+
+# ======================================================
+# Endpoint: Riwayat Prediksi
+# ======================================================
+@app.get("/api/predictions")
+async def get_prediction_history(
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+):
+    """
+    Mengambil seluruh riwayat prediksi yang telah dilakukan.
+    """
+    conn = get_db()
+    try:
+        with _db_lock:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM prediction_history ORDER BY id DESC LIMIT ? OFFSET ?;",
+                (limit, offset),
+            )
+            rows = cursor.fetchall()
+        predictions = [
+            {
+                "id": row["id"],
+                "prediction_date": row["prediction_date"],
+                "target_date": row["target_date"],
+                "pm25_prediction": row["pm25_prediction"],
+                "temperature_prediction": row["temperature_prediction"],
+                "humidity_prediction": row["humidity_prediction"],
+                "pm25_actual": row["pm25_actual"],
+                "temperature_actual": row["temperature_actual"],
+                "humidity_actual": row["humidity_actual"],
+                "pm25_error": row["pm25_error"],
+                "temperature_error": row["temperature_error"],
+                "humidity_error": row["humidity_error"],
+            }
+            for row in rows
+        ]
+        return {
+            "status": "success",
+            "data": predictions,
+        }
+    except Exception as e:
+        logger.error(f"Gagal mengambil riwayat prediksi: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+
+# ======================================================
+# Entry Point untuk Lokal / Railway
+# ======================================================
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", "8000"))
-    uvicorn.run("api.main:app", host="0.0.0.0", port=port, reload=True)
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)

@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Dict, List, Tuple, Any
 import json
-
+from datetime import datetime, timedelta
 import joblib
 import pandas as pd
 
@@ -113,16 +113,25 @@ def recursive_forecast(
     models: Tuple[Any, Any, Any],
     days: int = 7
 ) -> List[Dict[str, float]]:
+
     current_state = initial_state.copy()
     results = []
 
+    # tanggal saat prediksi dilakukan
+    prediction_date = datetime.now()
+
     for step in range(1, days + 1):
+
         feature_row = build_feature_row(current_state)
+
         prediction = predict_one_step(models, feature_row)
+
+        target_date = prediction_date + timedelta(days=step)
 
         results.append(
             {
                 "day_ahead": f"D+{step}",
+                "target_date": target_date.strftime("%Y-%m-%d"),
                 "pm25_prediction": round(prediction["pm25"], 3),
                 "temperature_prediction": round(prediction["temperature"], 3),
                 "humidity_prediction": round(prediction["humidity"], 3),

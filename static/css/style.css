@@ -1,0 +1,268 @@
+/* ===========================================================
+   Air Quality Monitoring & Prediction - Dashboard Styles
+   Professional, Modern, Blue/White Theme, Responsive
+   =========================================================== */
+
+
+/* --- Root Variables --- */
+
+:root {
+    --primary-color: #0d6efd;
+    --primary-dark: #0b5ed7;
+    --secondary-color: #6c757d;
+    --success-color: #198754;
+    --danger-color: #dc3545;
+    --warning-color: #ffc107;
+    --info-color: #0dcaf0;
+    --bg-light: #f8f9fa;
+    --text-dark: #212529;
+    --text-muted: #6c757d;
+    --card-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+    --card-hover-shadow: 0 0.5rem 1rem rgba(13, 110, 253, 0.15);
+    --transition-speed: 0.3s;
+}
+
+
+/* --- Global Body --- */
+
+body {
+    background-color: #f0f4f8;
+    /* lembut biru muda */
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    color: var(--text-dark);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+
+/* --- Navbar Customization --- */
+
+.navbar-dark.bg-primary {
+    background: linear-gradient(135deg, #0d6efd 0%, #0a58ca 100%) !important;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+}
+
+.navbar-brand i {
+    font-size: 1.4rem;
+}
+
+#statusBadge {
+    font-size: 0.85rem;
+    padding: 0.35em 0.65em;
+    border-radius: 50px;
+}
+
+#statusBadge i {
+    font-size: 0.6rem;
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.5;
+    }
+    100% {
+        opacity: 1;
+    }
+}
+
+
+/* --- Cards --- */
+
+.card {
+    border-radius: 12px;
+    transition: all var(--transition-speed) ease-in-out;
+    background-color: #ffffff;
+}
+
+.card-header {
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+    border-radius: 12px 12px 0 0 !important;
+    font-weight: 600;
+}
+
+.card-body {
+    padding: 1.25rem;
+}
+
+.hover-card {
+    cursor: default;
+}
+
+.hover-card:hover {
+    transform: translateY(-5px);
+    box-shadow: var(--card-hover-shadow) !important;
+}
+
+
+/* Card specific icon colors (overridden by inline colors mostly) */
+
+.card .fa-smog {
+    color: var(--primary-color);
+}
+
+.card .fa-temperature-high {
+    color: var(--danger-color);
+}
+
+.card .fa-tint {
+    color: var(--info-color);
+}
+
+.card .fa-clock {
+    color: var(--warning-color);
+}
+
+
+/* Value styling inside cards */
+
+.card h3 {
+    font-size: 2rem;
+    line-height: 1.2;
+    margin: 0.25rem 0;
+}
+
+
+/* --- Chart Canvas --- */
+
+canvas {
+    max-width: 100%;
+    height: auto !important;
+}
+
+
+/* --- Prediction Dropdown & Button --- */
+
+#predictDays {
+    border-radius: 8px;
+    padding: 0.5rem 1rem;
+    font-weight: 500;
+}
+
+#predictBtn {
+    border-radius: 8px;
+    padding: 0.6rem 1.5rem;
+    transition: all 0.2s;
+    font-size: 1rem;
+    background: linear-gradient(to right, #0d6efd, #0b5ed7);
+    border: none;
+}
+
+#predictBtn:hover {
+    background: linear-gradient(to right, #0b5ed7, #094bb3);
+    transform: scale(1.02);
+}
+
+
+/* Prediction result table */
+
+#predictionResultContainer table {
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+#predictionResultContainer th {
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+
+/* --- History Table --- */
+
+#historyTable {
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+#historyTable thead {
+    background-color: #f1f5f9;
+}
+
+#historyTable th {
+    font-weight: 600;
+    color: #475569;
+    border-bottom: 2px solid #dee2e6;
+}
+
+
+/* --- Loading Spinner --- */
+
+.spinner-border {
+    width: 3rem;
+    height: 3rem;
+}
+
+
+/* --- Responsive Adjustments --- */
+
+@media (max-width: 768px) {
+    .navbar-brand {
+        font-size: 1rem;
+    }
+    .card h3 {
+        font-size: 1.5rem;
+    }
+    .navbar .text-white.small {
+        display: none;
+        /* hide last update text on small screens, still shown in card */
+    }
+    .display-4 {
+        font-size: 2rem;
+    }
+}
+
+@media (max-width: 576px) {
+    .card-body {
+        padding: 1rem;
+    }
+    #predictDays,
+    #predictBtn {
+        width: 100%;
+    }
+    .table th,
+    .table td {
+        font-size: 0.85rem;
+        padding: 0.5rem;
+    }
+}
+
+
+/* --- Footer --- */
+
+footer {
+    margin-top: auto;
+    background-color: #ffffff;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+
+/* --- Smooth Scroll --- */
+
+html {
+    scroll-behavior: smooth;
+}
+
+
+/* --- Custom Scrollbar (optional) --- */
+
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #f1f1f1;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #a8a8a8;
+}

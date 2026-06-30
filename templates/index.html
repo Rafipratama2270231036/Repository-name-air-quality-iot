@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="id">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Air Quality Monitoring & Prediction</title>
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+
+<body>
+    <!-- Navbar -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary shadow-sm">
+        <div class="container-fluid">
+            <a class="navbar-brand fw-bold" href="#">
+                <i class="fas fa-wind me-2"></i>Air Quality Monitoring & Prediction
+            </a>
+            <div class="d-flex align-items-center">
+                <span class="badge bg-success me-3" id="statusBadge">
+                    <i class="fas fa-circle me-1"></i>Online
+                </span>
+                <span class="text-white small" id="lastUpdate">Last update: --</span>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="container-fluid mt-4 mb-5">
+        <!-- Dashboard Cards -->
+        <div class="row g-3 mb-4">
+            <div class="col-12 col-md-6 col-lg-3">
+                <div class="card border-0 shadow-sm rounded-3 hover-card">
+                    <div class="card-body text-center">
+                        <i class="fas fa-smog fa-2x text-primary mb-2"></i>
+                        <h6 class="text-muted">PM<sub>2.5</sub></h6>
+                        <h3 class="fw-bold mb-0" id="pm25Value">--</h3>
+                        <small class="text-muted">µg/m³</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-12 col-md-6 col-lg-3">
+                <div class="card border-0 shadow-sm rounded-3 hover-card">
+                    <div class="card-body text-center">
+                        <i class="fas fa-temperature-high fa-2x text-danger mb-2"></i>
+                        <h6 class="text-muted">Suhu</h6>
+                        <h3 class="fw-bold mb-0" id="tempValue">--</h3>
+                        <small class="text-muted">°C</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-12 col-md-6 col-lg-3">
+                <div class="card border-0 shadow-sm rounded-3 hover-card">
+                    <div class="card-body text-center">
+                        <i class="fas fa-tint fa-2x text-info mb-2"></i>
+                        <h6 class="text-muted">Kelembapan</h6>
+                        <h3 class="fw-bold mb-0" id="humValue">--</h3>
+                        <small class="text-muted">%</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-12 col-md-6 col-lg-3">
+                <div class="card border-0 shadow-sm rounded-3 hover-card">
+                    <div class="card-body text-center">
+                        <i class="fas fa-clock fa-2x text-warning mb-2"></i>
+                        <h6 class="text-muted">Update Terakhir</h6>
+                        <p class="mb-0 small" id="lastUpdateText">--</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts Row -->
+        <div class="row g-3 mb-4">
+            <div class="col-12 col-lg-4">
+                <div class="card border-0 shadow-sm rounded-3">
+                    <div class="card-header bg-white fw-bold text-primary">
+                        <i class="fas fa-chart-line me-2"></i>PM<sub>2.5</sub> (Real-time)
+                    </div>
+                    <div class="card-body">
+                        <canvas id="pm25Chart" height="200"></canvas>
+                    </div>
+                </div>
+            </div>
+            <div class="col-12 col-lg-4">
+                <div class="card border-0 shadow-sm rounded-3">
+                    <div class="card-header bg-white fw-bold text-danger">
+                        <i class="fas fa-chart-line me-2"></i>Suhu (Real-time)
+                    </div>
+                    <div class="card-body">
+                        <canvas id="tempChart" height="200"></canvas>
+                    </div>
+                </div>
+            </div>
+            <div class="col-12 col-lg-4">
+                <div class="card border-0 shadow-sm rounded-3">
+                    <div class="card-header bg-white fw-bold text-info">
+                        <i class="fas fa-chart-line me-2"></i>Kelembapan (Real-time)
+                    </div>
+                    <div class="card-body">
+                        <canvas id="humChart" height="200"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Prediction Section -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card border-0 shadow-sm rounded-3">
+                    <div class="card-header bg-white fw-bold text-primary">
+                        <i class="fas fa-crystal-ball me-2"></i>Prediksi Kualitas Udara (XGBoost)
+                    </div>
+                    <div class="card-body">
+                        <div class="row align-items-end">
+                            <div class="col-12 col-md-4 mb-3 mb-md-0">
+                                <label for="predictDays" class="form-label fw-semibold">Jumlah Hari Prediksi</label>
+                                <select id="predictDays" class="form-select">
+                                    <option value="1">D+1</option>
+                                    <option value="2">D+2</option>
+                                    <option value="3">D+3</option>
+                                    <option value="4">D+4</option>
+                                    <option value="5">D+5</option>
+                                    <option value="6">D+6</option>
+                                    <option value="7">D+7</option>
+                                </select>
+                            </div>
+                            <div class="col-12 col-md-4 mb-3 mb-md-0">
+                                <button id="predictBtn" class="btn btn-primary fw-semibold w-100">
+                                    <i class="fas fa-play me-2"></i>Prediksi
+                                </button>
+                            </div>
+                        </div>
+                        <!-- Tabel hasil prediksi -->
+                        <div class="mt-4 table-responsive" id="predictionResultContainer" style="display:none;">
+                            <h6 class="fw-bold">Hasil Prediksi</h6>
+                            <table class="table table-bordered table-hover">
+                                <thead class="table-primary">
+                                    <tr>
+                                        <th>Tanggal Target</th>
+                                        <th>PM<sub>2.5</sub> (µg/m³)</th>
+                                        <th>Suhu (°C)</th>
+                                        <th>Kelembapan (%)</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="predictionTableBody">
+                                    <!-- diisi JS -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- History Section -->
+        <div class="row">
+            <div class="col-12">
+                <div class="card border-0 shadow-sm rounded-3">
+                    <div class="card-header bg-white fw-bold text-primary">
+                        <i class="fas fa-history me-2"></i>Riwayat Monitoring Sensor
+                    </div>
+                    <div class="card-body table-responsive">
+                        <table class="table table-striped table-hover" id="historyTable">
+                            <thead>
+                                <tr>
+                                    <th>Waktu</th>
+                                    <th>PM<sub>2.5</sub> (µg/m³)</th>
+                                    <th>Suhu (°C)</th>
+                                    <th>Kelembapan (%)</th>
+                                </tr>
+                            </thead>
+                            <tbody id="historyTableBody">
+                                <!-- diisi JS -->
+                            </tbody>
+                        </table>
+                        <div id="historyLoading" class="text-center d-none">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="bg-light text-center py-3 mt-auto border-top">
+        <small class="text-muted">&copy; 2026 Air Quality Monitoring & Prediction - Skripsi IoT + XGBoost</small>
+    </footer>
+
+    <!-- Bootstrap 5 JS Bundle -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Custom JavaScript -->
+    <script src="/static/js/script.js"></script>
+</body>
+
+</html>
